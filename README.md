@@ -116,15 +116,3 @@ Resolv/
     ├── test_triage.py    Prompt construction + response parsing + mocked pipeline
     └── test_indexer.py   Qdrant upsert / search / multi-tenant isolation
 ```
-
----
-
-## Phases
-
-| Phase | Status | Description |
-|---|---|---|
-| 1 — Backtest harness | **Done** | Offline P/R/F1 evaluation against historical data |
-| 2 — Live webhooks + queue | 🔜 Next | GitHub App + Redis Streams + comment poster |
-| 3 — Kubernetes + observability | 🔜 | k3s/kind, KEDA autoscaling, Prometheus/Grafana/OTel |
-| 4 — Multi-repo + rate limiting | 🔜 Stretch | Per-repo filtering, token-bucket rate limiter |
-| 5 — MLOps | 🔜 Stretch | MLflow experiment tracking, eval-gated CI |
