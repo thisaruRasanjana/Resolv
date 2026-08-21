@@ -1,0 +1,30 @@
+
+services:
+  # Qdrant vector store — stores issue embeddings, searchable by repo_id
+  # Server v1.13.6: compatible with qdrant-client 1.19.x (query_points API requires server >=1.10)
+  qdrant:
+    image: qdrant/qdrant:v1.13.6
+    container_name: resolv-qdrant
+    ports:
+      - "6333:6333"   # REST API + dashboard
+      - "6334:6334"   # gRPC (unused in Phase 1, but exposed for later)
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  # Ollama LLM server — serves llama3.1:8b locally
+  # NOTE: On M2 Mac, Ollama runs natively outside Docker (better Metal GPU access).
+  # This service definition is here for reference / Linux CI use.
+  # If you have Ollama running natively (recommended on Mac), you can comment this out.
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: resolv-ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  # ollama_data:
