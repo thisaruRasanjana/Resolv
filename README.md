@@ -6,7 +6,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full technical spec.
 
 ---
 
-## Current status: Phase 1 — Backtest Harness ✅
+## Current status: Phase 1 — Backtest Harness
 
 The offline backtest harness is fully implemented. You can run it against any public GitHub repo to measure how well the retrieval + LLM pipeline detects duplicate issues against real historical data — no live installs or webhooks required.
 
@@ -123,7 +123,7 @@ Resolv/
 
 | Phase | Status | Description |
 |---|---|---|
-| 1 — Backtest harness | ✅ **Done** | Offline P/R/F1 evaluation against historical data |
+| 1 — Backtest harness | **Done** | Offline P/R/F1 evaluation against historical data |
 | 2 — Live webhooks + queue | 🔜 Next | GitHub App + Redis Streams + comment poster |
 | 3 — Kubernetes + observability | 🔜 | k3s/kind, KEDA autoscaling, Prometheus/Grafana/OTel |
 | 4 — Multi-repo + rate limiting | 🔜 Stretch | Per-repo filtering, token-bucket rate limiter |
