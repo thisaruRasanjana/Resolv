@@ -6,9 +6,9 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full technical spec.
 
 ---
 
-## Current status: Phase 1 — Backtest Harness
+## Current status: Phase 2 — Live Webhooks + Queue
 
-The offline backtest harness is fully implemented. You can run it against any public GitHub repo to measure how well the retrieval + LLM pipeline detects duplicate issues against real historical data — no live installs or webhooks required.
+Phase 1 (Offline Backtest) and Phase 2 (Live Webhooks + Redis Queue) are fully implemented. The bot can now run against live GitHub repositories, listening for webhook events via a FastAPI server, queuing them in Redis Streams, and using background workers (Ingestion & Triage) to asynchronously embed issues and post comments on GitHub.
 
 ---
 
@@ -16,21 +16,24 @@ The offline backtest harness is fully implemented. You can run it against any pu
 
 | Layer | Choice |
 |---|---|
+| Webhook Receiver | FastAPI |
+| Queue / Broker | Redis Streams (`redis-py` async) |
 | Embeddings | `all-MiniLM-L6-v2` (sentence-transformers, 384-dim, runs on Apple MPS) |
 | Vector store | Qdrant |
 | LLM | Ollama (`llama3.1:8b`, self-hosted, zero cost) |
-| State store | SQLite (→ Postgres in Phase 3) |
+| State store | SQLite (Idempotency and rate limiting) |
 | Language | Python 3.11+ |
 
 ---
 
-## Quickstart (Phase 1 — Backtest)
+## Quickstart (Phase 2 — Live Bot)
 
 ### Prerequisites
 - Python 3.11+
 - Docker Desktop running
 - Ollama running with `llama3.1:8b` pulled (`ollama pull llama3.1:8b`)
-- A GitHub Personal Access Token with `public_repo` read scope
+- A GitHub App configured (see `docs/github-app-setup.md` or Phase 2 docs)
+- `smee-client` installed (`npm install -g smee-client`) for local webhook proxy
 
 ### 1. Clone and install
 
@@ -44,55 +47,38 @@ pip install -e ".[dev]"
 
 ```bash
 cp .env.example .env
-# Edit .env and set GITHUB_TOKEN=ghp_your_token_here
+# Edit .env and set all GitHub App credentials (GITHUB_APP_ID, GITHUB_PRIVATE_KEY_PATH, GITHUB_WEBHOOK_SECRET)
 ```
 
-### 3. Start Qdrant
+### 3. Start Infrastructure (Qdrant & Redis)
 
 ```bash
-make up
-# Qdrant dashboard: http://localhost:6333/dashboard
+docker compose up -d
 ```
 
-### 4. Fetch issues
+### 4. Run the Pipeline (Requires 4 Terminals)
 
-Fetches issues from `microsoft/vscode` (the default repo). Use `--limit` to cap
-the number of issues for a quick test:
-
+Terminal 1: Start the FastAPI webhook receiver
 ```bash
-make fetch                          # all issues (slow — 170k issues)
-make fetch LIMIT=2000               # fast test run (~2000 issues)
-make fetch REPO=facebook/react LIMIT=3000
+make webhook-server
 ```
 
-Data is saved to `backtest/data/{owner}_{repo}/`:
-- `issues.jsonl` — raw issue data, one JSON object per line
-- `ground_truth.json` — maps each issue number to its duplicate target (or null)
-
-### 5. Run the backtest
-
+Terminal 2: Start the smee.io webhook proxy (replace with your URL)
 ```bash
-make backtest LIMIT=2000            # use same LIMIT as your fetch
-make backtest REPO=facebook/react LIMIT=3000
+make smee SMEE_URL=https://smee.io/YOUR_URL
 ```
 
-The replay engine processes issues in chronological order. For each issue that is
-a known duplicate (based on labels and body patterns), it:
-1. Runs the full retrieval + LLM pipeline against the index as it existed at that point in time.
-2. Records whether it correctly identified the duplicate.
-
-Outputs:
-- A metrics table in the terminal (Precision / Recall / F1)
-- A markdown report at `backtest/results/{owner}_{repo}_report.md`
-- Metrics stored in `backtest/data/resolv.db` (SQLite)
-
-### 6. Run unit tests
-
+Terminal 3: Start the Ingestion worker (embeds and upserts new issues)
 ```bash
-make test
+make ingestion-worker
 ```
 
-> **Note:** `tests/test_indexer.py` requires Qdrant to be running (`make up`). The other tests run without any services.
+Terminal 4: Start the Triage worker (retrieves duplicates and posts comments)
+```bash
+make triage-worker
+```
+
+When you open a new issue in a repository where the GitHub App is installed, the webhook is received, pushed to Redis, and processed asynchronously by the workers.
 
 ---
 
@@ -106,13 +92,22 @@ Resolv/
 │   ├── embedder.py       Sentence-transformers wrapper (MPS-aware)
 │   ├── indexer.py        Qdrant client (upsert, search, delete)
 │   ├── triage.py         Embed → retrieve → LLM → parse
+│   ├── webhook.py        FastAPI GitHub webhook receiver (HMAC verification)
+│   ├── queue.py          Redis Streams async producer/consumer
+│   ├── github_client.py  GitHub App JWT auth & comment API
+│   ├── idempotency.py    Webhook delivery deduplication (SQLite)
 │   ├── db.py             SQLite state store
-│   └── logging.py        Structured JSON logging (structlog)
+│   ├── logging.py        Structured JSON logging (structlog)
+│   └── workers/          
+│       ├── ingestion.py  Worker: consume events → index in Qdrant
+│       └── triage.py     Worker: consume events → run LLM → post comment
 ├── backtest/
 │   ├── fetch.py          GitHub API fetcher + ground-truth extractor
 │   └── replay.py         Chronological replay + P/R/F1 evaluation
 └── tests/
     ├── test_embedder.py  Embedding correctness + similarity ranking
     ├── test_triage.py    Prompt construction + response parsing + mocked pipeline
-    └── test_indexer.py   Qdrant upsert / search / multi-tenant isolation
+    ├── test_indexer.py   Qdrant upsert / search / multi-tenant isolation
+    ├── test_webhook.py   FastAPI routes & HMAC signature verification
+    └── test_queue.py     Redis Streams operations
 ```

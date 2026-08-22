@@ -39,9 +39,11 @@ CREATE TABLE IF NOT EXISTS rate_limit_state (
 );
 
 CREATE TABLE IF NOT EXISTS processed_deliveries (
-    delivery_id  TEXT PRIMARY KEY,
+    delivery_id  TEXT NOT NULL,
+    worker_group TEXT NOT NULL,
     repo_id      TEXT NOT NULL,
-    processed_at TEXT NOT NULL
+    processed_at TEXT NOT NULL,
+    PRIMARY KEY (delivery_id, worker_group)
 );
 
 CREATE TABLE IF NOT EXISTS backtest_results (

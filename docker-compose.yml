@@ -25,6 +25,17 @@ services:
   #     - ollama_data:/root/.ollama
   #   restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: resolv-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes  # AOF persistence
+
 volumes:
   qdrant_data:
   # ollama_data:
+  redis_data:

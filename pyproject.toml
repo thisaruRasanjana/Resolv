@@ -28,6 +28,14 @@ dependencies = [
     "python-dotenv>=1.0",
     # Rich terminal output for the backtest report
     "rich>=13.7",
+    # Phase 2: Webhook receiver
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    # Phase 2: Redis Streams queue
+    "redis>=5.0",
+    # Phase 2: GitHub App JWT auth
+    "PyJWT[crypto]>=2.8",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]
