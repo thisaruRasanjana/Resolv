@@ -111,15 +111,3 @@ Resolv/
     ├── test_webhook.py   FastAPI routes & HMAC signature verification
     └── test_queue.py     Redis Streams operations
 ```
-
----
-
-## Phases
-
-| Phase | Status | Description |
-|---|---|---|
-| 1 — Backtest harness | **Done** | Offline P/R/F1 evaluation against historical data |
-| 2 — Live webhooks + queue | **Done** | GitHub App + Redis Streams + comment poster |
-| 3 — Kubernetes + observability | 🔜 Next | k3s/kind, KEDA autoscaling, Prometheus/Grafana/OTel |
-| 4 — Multi-repo + rate limiting | 🔜 Stretch | Per-repo filtering, token-bucket rate limiter |
-| 5 — MLOps | 🔜 Stretch | MLflow experiment tracking, eval-gated CI |
