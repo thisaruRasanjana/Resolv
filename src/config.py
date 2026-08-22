@@ -56,3 +56,28 @@ TOP_K: int = int(os.getenv("TOP_K", "10"))
 # all-MiniLM-L6-v2: 384 dims, ~22 M params, fast on CPU/MPS.
 # Swap to all-mpnet-base-v2 for higher quality at ~2x latency cost.
 EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
+# ── GitHub App (Phase 2) ────────────────────────────────────────────────
+# Loaded lazily like GITHUB_TOKEN — webhook tests don't need these.
+def get_github_app_id() -> int:
+    """Return the GitHub App ID."""
+    return int(_require("GITHUB_APP_ID"))
+
+def get_github_private_key() -> str:
+    """Read the GitHub App private key from the PEM file."""
+    key_path = Path(_require("GITHUB_PRIVATE_KEY_PATH"))
+    if not key_path.exists():
+        raise RuntimeError(f"Private key file not found: {key_path}")
+    return key_path.read_text()
+
+def get_github_webhook_secret() -> str:
+    """Return the webhook secret for HMAC verification."""
+    return _require("GITHUB_WEBHOOK_SECRET")
+
+# ── Redis ───────────────────────────────────────────────────────────────
+REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+# ── Queue ───────────────────────────────────────────────────────────────
+EVENTS_STREAM: str = "resolv:events"
+DEAD_LETTER_STREAM: str = "resolv:dead-letters"
+MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))

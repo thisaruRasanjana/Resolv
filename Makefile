@@ -57,3 +57,17 @@ test:
 
 lint:
 	ruff check src/ backtest/ tests/
+
+# Phase 2: Webhook receiver + workers
+webhook-server:
+	$(PYTHON) -m uvicorn src.webhook:app --host 0.0.0.0 --port 8000 --reload
+
+SMEE_URL ?=
+smee:
+	smee --url $(SMEE_URL) --path /webhook --port 8000
+
+ingestion-worker:
+	$(PYTHON) -m src.workers.ingestion
+
+triage-worker:
+	$(PYTHON) -m src.workers.triage
