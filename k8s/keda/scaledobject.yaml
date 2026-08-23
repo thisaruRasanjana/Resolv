@@ -1,0 +1,18 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: triage-worker-scaler
+  namespace: resolv
+spec:
+  scaleTargetRef:
+    name: triage-worker
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  triggers:
+    - type: redis-streams
+      metadata:
+        # Assuming Redis is available at this internal address
+        address: resolv-redis.resolv.svc.cluster.local:6379
+        stream: resolv:events
+        consumerGroup: triage-group
+        pendingEntriesCount: "5"  # Scale up if >5 pending messages per worker

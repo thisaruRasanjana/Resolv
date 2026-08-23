@@ -22,6 +22,9 @@ GROUP = "triage-group"
 CONSUMER = "triage-worker-1"
 
 
+from src.metrics import triage_comments_posted
+from src.tracing import tracer
+
 async def process_event(event_data: dict) -> None:
     """Process a single triage event."""
     action = event_data["action"]
@@ -49,12 +52,14 @@ async def process_event(event_data: dict) -> None:
     comment_body = format_triage_comment(result)
 
     if installation_id:
-        post_comment(
-            installation_id=installation_id,
-            repo_id=repo_id,
-            issue_number=issue_number,
-            body=comment_body,
-        )
+        with tracer.start_as_current_span("post_comment"):
+            post_comment(
+                installation_id=installation_id,
+                repo_id=repo_id,
+                issue_number=issue_number,
+                body=comment_body,
+            )
+            triage_comments_posted.inc()
     else:
         log.warning(
             "no installation_id, cannot post comment",

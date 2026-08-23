@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: resolv-config
+  namespace: resolv
+data:
+  SQLITE_PATH: "/data/resolv.db"
+  QDRANT_HOST: "resolv-qdrant"
+  QDRANT_PORT: "6333"
+  REDIS_URL: "redis://resolv-redis:6379"
+  # Point to host machine's Ollama instance (Docker Desktop specific)
+  OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+  OLLAMA_MODEL: "llama3.1:8b"
+  EMBEDDING_DEVICE: "cpu"
+  MAX_RETRIES: "3"

@@ -41,9 +41,14 @@ OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
 # ── Vector store (Qdrant) ───────────────────────────────────────────────────
-QDRANT_HOST: str = os.getenv("QDRANT_HOST", "localhost")
-QDRANT_PORT: int = int(os.getenv("QDRANT_PORT", "6333"))
-QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "resolv_issues")
+QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "resolv_issues_llama3")
+
+# ── Embeddings (Ollama) ─────────────────────────────────────────────────────
+# Uses the same llama3.1:8b model running in Ollama for embeddings.
+# This eliminates the need for sentence-transformers and PyTorch.
+EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "llama3.1:8b")
+EMBEDDING_DIM: int = 4096
 
 # ── State store (SQLite) ────────────────────────────────────────────────────
 SQLITE_PATH: Path = Path(os.getenv("SQLITE_PATH", "backtest/data/resolv.db"))
@@ -52,10 +57,7 @@ SQLITE_PATH: Path = Path(os.getenv("SQLITE_PATH", "backtest/data/resolv.db"))
 # Number of similar issues to retrieve per query (used by the triage worker)
 TOP_K: int = int(os.getenv("TOP_K", "10"))
 
-# ── Embedding model ─────────────────────────────────────────────────────────
-# all-MiniLM-L6-v2: 384 dims, ~22 M params, fast on CPU/MPS.
-# Swap to all-mpnet-base-v2 for higher quality at ~2x latency cost.
-EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
 
 # ── GitHub App (Phase 2) ────────────────────────────────────────────────
 # Loaded lazily like GITHUB_TOKEN — webhook tests don't need these.

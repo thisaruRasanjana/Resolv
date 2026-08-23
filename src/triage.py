@@ -32,6 +32,8 @@ from src import config
 from src.embedder import embed, prepare_text
 from src.indexer import SearchResult, search_similar
 from src.logging import get_logger
+from src.metrics import triage_stage_duration, llm_call_errors
+from src.tracing import tracer
 
 log = get_logger(__name__)
 
@@ -146,7 +148,8 @@ def call_ollama(prompt: str, retries: int = 3) -> str:
             )
             if attempt < retries - 1:
                 time.sleep(wait)
-
+    
+    llm_call_errors.inc()
     raise RuntimeError(f"Ollama call failed after {retries} attempts")
 
 
@@ -199,16 +202,20 @@ def triage_issue(
     k = top_k if top_k is not None else config.TOP_K
 
     # Step 1: Embed the incoming issue
-    text = prepare_text(title, body)
-    query_vector = embed(text)
+    with triage_stage_duration.labels(stage="embed").time():
+        with tracer.start_as_current_span("embed"):
+            text = prepare_text(title, body)
+            query_vector = embed(text)
 
     # Step 2: Retrieve similar past issues (filtered by repo_id — no cross-tenant leakage)
-    retrieved = search_similar(
-        query_vector=query_vector,
-        repo_id=repo_id,
-        top_k=k,
-        exclude_issue_number=issue_number if exclude_self else None,
-    )
+    with triage_stage_duration.labels(stage="retrieve").time():
+        with tracer.start_as_current_span("retrieve"):
+            retrieved = search_similar(
+                query_vector=query_vector,
+                repo_id=repo_id,
+                top_k=k,
+                exclude_issue_number=issue_number if exclude_self else None,
+            )
 
     log.debug(
         "retrieval complete",
@@ -219,28 +226,31 @@ def triage_issue(
     )
 
     # Step 3: Build prompt and call LLM
-    prompt = build_prompt(title, body, retrieved)
-    raw_response = call_ollama(prompt)
+    with triage_stage_duration.labels(stage="generate").time():
+        with tracer.start_as_current_span("llm_generate"):
+            prompt = build_prompt(title, body, retrieved)
+            raw_response = call_ollama(prompt)
 
     # Step 4: Parse structured output
-    try:
-        parsed = parse_response(raw_response)
-    except (ValueError, json.JSONDecodeError) as exc:
-        log.warning(
-            "failed to parse LLM response, returning safe default",
-            issue_number=issue_number,
-            error=str(exc),
-        )
-        # Return a safe "no determination" result rather than crashing the pipeline
-        return TriageResult(
-            is_duplicate=False,
-            confidence=0.0,
-            duplicate_of=None,
-            suggested_labels=[],
-            related_issues=[],
-            raw_response=raw_response,
-            retrieval_scores=[r.score for r in retrieved],
-        )
+    with triage_stage_duration.labels(stage="parse").time():
+        try:
+            parsed = parse_response(raw_response)
+        except (ValueError, json.JSONDecodeError) as exc:
+            log.warning(
+                "failed to parse LLM response, returning safe default",
+                issue_number=issue_number,
+                error=str(exc),
+            )
+            # Return a safe "no determination" result rather than crashing the pipeline
+            return TriageResult(
+                is_duplicate=False,
+                confidence=0.0,
+                duplicate_of=None,
+                suggested_labels=[],
+                related_issues=[],
+                raw_response=raw_response,
+                retrieval_scores=[r.score for r in retrieved],
+            )
 
     return TriageResult(
         is_duplicate=bool(parsed.get("is_duplicate", False)),
