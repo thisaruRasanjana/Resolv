@@ -67,13 +67,12 @@ def get_client() -> QdrantClient:
     global _client
     if _client is None:
         _client = QdrantClient(
-            host=config.QDRANT_HOST,
-            port=config.QDRANT_PORT,
+            url=config.QDRANT_URL,
             # Suppress the version-mismatch warning — we manage compatibility
             # via pinned versions in pyproject.toml and docker-compose.yml.
             check_compatibility=False,
         )
-        log.debug("qdrant client created", host=config.QDRANT_HOST, port=config.QDRANT_PORT)
+        log.debug("qdrant client created", url=config.QDRANT_URL)
     return _client
 
 

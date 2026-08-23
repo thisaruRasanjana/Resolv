@@ -54,7 +54,7 @@ def _make_point(issue_number: int, repo_id: str = "owner/repo", vector: list[flo
     if vector is None:
         # Random unit vector — doesn't need to be meaningful for indexer tests
         import random
-        raw = [random.gauss(0, 1) for _ in range(384)]
+        raw = [random.gauss(0, 1) for _ in range(4096)]
         norm = math.sqrt(sum(v * v for v in raw))
         vector = [v / norm for v in raw]
 
@@ -100,7 +100,7 @@ def test_search_returns_results():
 
     # Search with a random query vector — should return results (order may vary)
     import random
-    raw = [random.gauss(0, 1) for _ in range(384)]
+    raw = [random.gauss(0, 1) for _ in range(4096)]
     norm = math.sqrt(sum(v * v for v in raw))
     query = [v / norm for v in raw]
 
@@ -115,7 +115,7 @@ def test_search_filters_by_repo_id():
     upsert_issue(_make_point(2, repo_id="owner/repo-b"))
 
     import random
-    raw = [random.gauss(0, 1) for _ in range(384)]
+    raw = [random.gauss(0, 1) for _ in range(4096)]
     norm = math.sqrt(sum(v * v for v in raw))
     query = [v / norm for v in raw]
 
@@ -130,7 +130,7 @@ def test_search_excludes_self():
     """exclude_issue_number should prevent the query issue from appearing in results."""
     # Insert issue 42 with a known vector
     import random
-    raw = [random.gauss(0, 1) for _ in range(384)]
+    raw = [random.gauss(0, 1) for _ in range(4096)]
     norm = math.sqrt(sum(v * v for v in raw))
     vec = [v / norm for v in raw]
 

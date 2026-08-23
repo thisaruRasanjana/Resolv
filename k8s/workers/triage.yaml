@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triage-worker
+  namespace: resolv
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: triage-worker
+  template:
+    metadata:
+      labels:
+        app: triage-worker
+    spec:
+      containers:
+        - name: worker
+          image: resolv:latest
+          imagePullPolicy: Never
+          command: ["python3", "-m", "src.workers.triage"]
+          envFrom:
+            - configMapRef:
+                name: resolv-config
+            - secretRef:
+                name: resolv-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
