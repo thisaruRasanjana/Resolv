@@ -6,11 +6,11 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full technical spec.
 
 ---
 
-## Current status: Phase 3 — Kubernetes + Observability
+## Current status: Phase 4 — Multi-Repo + Rate Limiting
 
-Phase 1 (Offline Backtest), Phase 2 (Live Webhooks + Redis Queue), and Phase 3 (Containerisation + Kubernetes + Observability) are fully implemented. 
+Phases 1 through 4 are fully implemented. The bot now supports multiple independent repositories simultaneously with per-repo rate limiting (Token Bucket algorithm) to prevent noisy-neighbor problems and API abuse.
 
-The bot is now a production-ready cloud-native service. It uses an ultra-lightweight Docker image (~105 MB) by leveraging Ollama for both LLM generation and vector embeddings, entirely eliminating the PyTorch dependency. It includes Kubernetes manifests for local `kind` deployment, KEDA autoscaling, OpenTelemetry distributed tracing, and Prometheus metrics.
+It uses an ultra-lightweight Docker image (~105 MB) by leveraging Ollama for both LLM generation and vector embeddings, entirely eliminating the PyTorch dependency. It includes Kubernetes manifests for local `kind` deployment, KEDA autoscaling, OpenTelemetry distributed tracing, and Prometheus metrics.
 
 ---
 
@@ -91,20 +91,22 @@ Resolv/
 │   ├── queue.py          Redis Streams async producer/consumer
 │   ├── github_client.py  GitHub App JWT auth & comment API
 │   ├── idempotency.py    Webhook delivery deduplication (SQLite)
+│   ├── rate_limiter.py   Token bucket rate limiter (SQLite)
 │   ├── metrics.py        Prometheus counters and histograms
 │   ├── tracing.py        OpenTelemetry tracing configuration
 │   └── workers/          
-│       ├── ingestion.py  Worker: consume events → index in Qdrant
+│       ├── ingestion.py  Worker: consume events → index in Qdrant + sync installations
 │       └── triage.py     Worker: consume events → run LLM → post comment
 ├── backtest/
 │   ├── fetch.py          GitHub API fetcher + ground-truth extractor
 │   └── replay.py         Chronological replay + P/R/F1 evaluation
 └── tests/
-    ├── test_embedder.py  Embedding pure function tests
-    ├── test_triage.py    Prompt construction + response parsing + mocked pipeline
-    ├── test_indexer.py   Qdrant upsert / search / multi-tenant isolation
-    ├── test_webhook.py   FastAPI routes & HMAC signature verification
-    └── test_queue.py     Redis Streams operations
+    ├── test_embedder.py      Embedding pure function tests
+    ├── test_triage.py        Prompt construction + response parsing + mocked pipeline
+    ├── test_indexer.py       Qdrant upsert / search / multi-tenant isolation
+    ├── test_webhook.py       FastAPI routes & HMAC signature verification
+    ├── test_queue.py         Redis Streams operations
+    └── test_rate_limiter.py  Token bucket math, exhaustion, refill, cap
 ```
 ---
 
@@ -115,5 +117,5 @@ Resolv/
 | 1 — Backtest harness | **Done** | Offline P/R/F1 evaluation against historical data |
 | 2 — Live webhooks + queue | **Done** | GitHub App + Redis Streams + comment poster |
 | 3 — Kubernetes + observability | **Done** | k8s/kind, KEDA autoscaling, Prometheus/Grafana/OTel |
-| 4 — Multi-repo + rate limiting | 🔜 Next | Per-repo filtering, token-bucket rate limiter |
-| 5 — MLOps | 🔜 Stretch | MLflow experiment tracking, eval-gated CI |
+| 4 — Multi-repo + rate limiting | **Done** | Per-repo token-bucket rate limiter, installation tracking |
+| 5 — MLOps | 🔜 Next | MLflow experiment tracking, eval-gated CI |

@@ -25,8 +25,18 @@ CONSUMER = "triage-worker-1"
 from src.metrics import triage_comments_posted
 from src.tracing import tracer
 
-async def process_event(event_data: dict) -> None:
+from src.rate_limiter import acquire_token
+
+class RateLimitExceeded(Exception):
+    """Raised when a repo has exhausted its token bucket."""
+    pass
+
+async def process_event(event_data: dict, conn) -> None:
     """Process a single triage event."""
+    event_type = event_data.get("event_type", "issues")
+    if event_type != "issues":
+        return
+
     action = event_data["action"]
 
     # Only triage newly opened issues
@@ -35,6 +45,12 @@ async def process_event(event_data: dict) -> None:
         return
 
     repo_id = event_data["repo_id"]
+
+    # 1. Enforce rate limit
+    if not acquire_token(conn, repo_id):
+        raise RateLimitExceeded(f"rate limit exceeded for {repo_id}")
+
+
     issue_number = event_data["issue_number"]
     title = event_data["title"]
     body = event_data.get("body", "")
@@ -76,6 +92,8 @@ async def process_event(event_data: dict) -> None:
     )
 
 
+from src.queue import publish_event
+
 async def run_worker():
     """Main worker loop — consume events forever."""
     ensure_collection()
@@ -99,12 +117,23 @@ async def run_worker():
                     continue
 
                 try:
-                    await process_event(event_data)
+                    await process_event(event_data, conn)
                     if delivery_id:
                         mark_processed(conn, delivery_id, GROUP, event_data["repo_id"])
                     await ack_event(GROUP, msg_id)
                     # Reset retry count on success
                     retry_counts.pop(delivery_id, None)
+
+                except RateLimitExceeded as exc:
+                    log.warning(
+                        "rate limit exceeded, deferring event",
+                        repo_id=event_data.get("repo_id"),
+                        delivery_id=delivery_id
+                    )
+                    # Acknowledge current message and push a fresh copy to the back of the queue
+                    await ack_event(GROUP, msg_id)
+                    await publish_event(event_data)
+                    await asyncio.sleep(2)  # brief pause before pulling next message
 
                 except Exception as exc:
                     attempts = retry_counts.get(delivery_id, 0) + 1
@@ -127,7 +156,9 @@ async def run_worker():
                             attempt=attempts,
                             error=str(exc),
                         )
-                        # Don't ACK — message will be re-delivered
+                        # Re-publish to the back of the queue for simple retry semantics
+                        await ack_event(GROUP, msg_id)
+                        await publish_event(event_data)
                         await asyncio.sleep(2 ** attempts)
 
         except Exception as exc:
