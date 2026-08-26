@@ -75,49 +75,69 @@ async def handle_webhook(request: Request):
         event_type = request.headers.get("X-GitHub-Event", "")
         delivery_id = request.headers.get("X-GitHub-Delivery", "")
     
-        # Step 3: Only process issue events
-        if event_type != "issues":
-            log.debug("ignoring non-issue event", event_type=event_type)
-            return Response(status_code=200, content="OK (ignored)")
-    
-        # Step 4: Parse payload
+        # Step 3: Parse payload
         payload = json.loads(body)
         action = payload.get("action", "")
-    
-        # We only care about: opened, edited, closed
-        if action not in ("opened", "edited", "closed"):
-            log.debug("ignoring issue action", action=action)
+
+        # Step 4: Handle specific event types
+        if event_type in ("installation", "installation_repositories"):
+            event_data = {
+                "delivery_id": delivery_id,
+                "event_type": event_type,
+                "action": action,
+                "installation_id": str(payload.get("installation", {}).get("id", "")),
+                # Redis requires string values, so we JSON serialize the lists of repos
+                "repositories_added": json.dumps(payload.get("repositories_added", [])),
+                "repositories_removed": json.dumps(payload.get("repositories_removed", [])),
+                "repositories": json.dumps(payload.get("repositories", [])), # Present on 'created'
+            }
+
+        elif event_type == "issues":
+            # We only care about: opened, edited, closed
+            if action not in ("opened", "edited", "closed"):
+                log.debug("ignoring issue action", action=action)
+                return Response(status_code=200, content="OK (ignored)")
+        
+            issue = payload["issue"]
+            repo = payload["repository"]
+            repo_id = repo["full_name"]  # "owner/repo"
+        
+            event_data = {
+                "delivery_id": delivery_id,
+                "event_type": event_type,
+                "action": action,
+                "repo_id": repo_id,
+                "issue_number": issue["number"],
+                "title": issue["title"],
+                "body": issue.get("body") or "",
+                "state": issue["state"],
+                "created_at": issue["created_at"],
+                "updated_at": issue["updated_at"],
+                "installation_id": str(payload.get("installation", {}).get("id", "")),
+            }
+            
+        else:
+            log.debug("ignoring unhandled event", event_type=event_type)
             return Response(status_code=200, content="OK (ignored)")
-    
-        # Step 5: Extract the data we need and push to Redis
-        issue = payload["issue"]
-        repo = payload["repository"]
-        repo_id = repo["full_name"]  # "owner/repo"
-    
-        event_data = {
-            "delivery_id": delivery_id,
-            "event_type": event_type,
-            "action": action,
-            "repo_id": repo_id,
-            "issue_number": issue["number"],
-            "title": issue["title"],
-            "body": issue.get("body") or "",
-            "state": issue["state"],
-            "created_at": issue["created_at"],
-            "updated_at": issue["updated_at"],
-            "installation_id": str(payload.get("installation", {}).get("id", "")),
-        }
     
     with tracer.start_as_current_span("enqueue"):
         await publish_event(event_data)
     
-    log.info(
-        "webhook processed",
-        delivery_id=delivery_id,
-        action=action,
-        repo_id=repo_id,
-        issue_number=issue["number"],
-    )
+    if event_type == "issues":
+        log.info(
+            "webhook processed",
+            delivery_id=delivery_id,
+            action=action,
+            repo_id=event_data["repo_id"],
+            issue_number=event_data["issue_number"],
+        )
+    else:
+        log.info(
+            "webhook processed",
+            delivery_id=delivery_id,
+            action=action,
+            event_type=event_type,
+        )
     return Response(status_code=200, content="OK")
 
 

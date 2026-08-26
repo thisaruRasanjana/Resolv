@@ -83,3 +83,7 @@ REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
 EVENTS_STREAM: str = "resolv:events"
 DEAD_LETTER_STREAM: str = "resolv:dead-letters"
 MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))
+
+# ── Rate Limiting (Phase 4) ─────────────────────────────────────────────
+RATE_LIMIT_TOKENS: int = int(os.getenv("RATE_LIMIT_TOKENS", "10"))
+RATE_LIMIT_REFILL_SEC: int = int(os.getenv("RATE_LIMIT_REFILL_SEC", "60"))

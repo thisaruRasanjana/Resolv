@@ -29,7 +29,44 @@ CONSUMER = "ingestion-worker-1"
 
 async def process_event(event_data: dict, conn) -> None:
     """Process a single ingestion event."""
+    event_type = event_data.get("event_type", "issues")
     action = event_data["action"]
+
+    if event_type in ("installation", "installation_repositories"):
+        import json
+        now_iso = datetime.now().isoformat()
+        cursor = conn.cursor()
+
+        # Handle 'created' (app installed on repos) or 'added' (new repo added to existing install)
+        if action in ("created", "added"):
+            repos_key = "repositories" if action == "created" else "repositories_added"
+            repos = json.loads(event_data.get(repos_key, "[]"))
+            for repo in repos:
+                repo_id = repo.get("full_name")
+                if repo_id:
+                    cursor.execute(
+                        """
+                        INSERT INTO installations (repo_id, installed_at, is_active)
+                        VALUES (?, ?, 1)
+                        ON CONFLICT(repo_id) DO UPDATE SET is_active = 1
+                        """,
+                        (repo_id, now_iso)
+                    )
+                    log.info("repo installed", repo_id=repo_id)
+
+        # Handle 'removed' (repo removed from existing install)
+        elif action == "removed":
+            repos = json.loads(event_data.get("repositories_removed", "[]"))
+            for repo in repos:
+                repo_id = repo.get("full_name")
+                if repo_id:
+                    cursor.execute("UPDATE installations SET is_active = 0 WHERE repo_id = ?", (repo_id,))
+                    log.info("repo uninstalled", repo_id=repo_id)
+
+        conn.commit()
+        return
+
+    # From here on, we handle issue events
     repo_id = event_data["repo_id"]
     issue_number = event_data["issue_number"]
     title = event_data["title"]
@@ -97,7 +134,7 @@ async def run_worker():
                 try:
                     await process_event(event_data, conn)
                     if delivery_id:
-                        mark_processed(conn, delivery_id, GROUP, event_data["repo_id"])
+                        mark_processed(conn, delivery_id, GROUP, event_data.get("repo_id", ""))
                     await ack_event(GROUP, msg_id)
                 except Exception as exc:
                     log.error(
