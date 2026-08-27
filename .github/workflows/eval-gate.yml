@@ -4,57 +4,75 @@ on:
     paths:
       - 'src/triage.py'
       - 'src/embedder.py'
+      - 'src/indexer.py'
       - 'backtest/**'
 
 jobs:
-  eval-backtest:
+  # Job 1: Fast — runs on every qualifying PR
+  unit-tests:
     runs-on: ubuntu-latest
     services:
       qdrant:
         image: qdrant/qdrant:v1.11.0
         ports:
           - 6333:6333
-          
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+
       - name: Install dependencies
         run: pip install -e ".[dev]"
-        
-      - name: Install and Run Ollama
-        run: |
-          curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve &
-          sleep 5
-          ollama pull llama3.1:8b
-          
-      - name: Fetch Test Data
-        run: python -m backtest.fetch --repo microsoft/vscode --limit 50
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Run Backtest
-        id: backtest
-        run: |
-          # Run the replay and grep out the recall metric
-          OUTPUT=$(python -m backtest.replay --repo microsoft/vscode --limit 50)
-          echo "$OUTPUT"
-          
-          # Extract Recall value
-          RECALL=$(echo "$OUTPUT" | grep -o 'Recall: [0-9.]*' | awk '{print $2}')
-          
-          # We require at least 5% recall on this tiny dataset for the pipeline to pass
-          MIN_RECALL=0.0500
-          
-          if [ $(echo "$RECALL < $MIN_RECALL" | bc) -eq 1 ]; then
-            echo "::error::Recall ($RECALL) is below minimum threshold ($MIN_RECALL)"
-            exit 1
-          else
-            echo "::notice::Recall ($RECALL) passed minimum threshold ($MIN_RECALL)"
-          fi
+
+      - name: Run unit + integration tests
+        run: python -m pytest tests/ -v
+
+      - name: Lint
+        run: ruff check src/ backtest/ tests/
+
+  # Job 2: Full backtest — runs only on self-hosted runners with Ollama pre-installed.
+  # To enable: set up a self-hosted runner with Ollama and llama3.1:8b pulled.
+  # Uncomment the job below and comment out the 'if: false' line.
+  #
+  # eval-backtest:
+  #   runs-on: self-hosted
+  #   needs: unit-tests
+  #   if: false  # Disabled by default — requires self-hosted runner with Ollama
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.11'
+  #
+  #     - name: Install dependencies
+  #       run: pip install -e ".[dev]"
+  #
+  #     - name: Fetch Test Data
+  #       run: python -m backtest.fetch --repo microsoft/vscode --limit 50
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #
+  #     - name: Run Eval Backtest
+  #       run: |
+  #         OUTPUT=$(python -m backtest.replay --repo microsoft/vscode --limit 50 2>&1)
+  #         echo "$OUTPUT"
+  #         RECALL=$(echo "$OUTPUT" | grep -o 'Recall: [0-9.]*' | awk '{print $2}')
+  #         MIN_RECALL=0.0500
+  #         if [ $(echo "$RECALL < $MIN_RECALL" | bc) -eq 1 ]; then
+  #           echo "::error::Recall ($RECALL) is below minimum threshold ($MIN_RECALL)"
+  #           exit 1
+  #         else
+  #           echo "::notice::Recall ($RECALL) passed minimum threshold ($MIN_RECALL)"
+  #         fi
