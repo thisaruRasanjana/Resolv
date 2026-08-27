@@ -13,3 +13,5 @@ build/
 *.pem
 k8s/secrets.yaml
 *.whl
+mlruns/
+mlflow.db

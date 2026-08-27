@@ -253,9 +253,9 @@ def write_report(
 
 # ── Main replay loop ──────────────────────────────────────────────────────────
 
-def run_replay(repo_id: str, limit: int | None = None) -> tuple[float, float, float]:
+def run_replay(repo_id: str, limit: int | None = None) -> tuple[float, float, float, Path, int]:
     """
-    Run the full chronological replay and return (precision, recall, f1).
+    Run the full chronological replay and return (precision, recall, f1, report_path, total_issues).
 
     The replay loop:
         For each issue in ascending created_at order:
@@ -280,15 +280,9 @@ def run_replay(repo_id: str, limit: int | None = None) -> tuple[float, float, fl
 
     # Initialise Qdrant collection (creates it if missing, no-op if exists)
     # Clear the collection to start fresh — important for reproducible results
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams
-    from src.embedder import embedding_dim
+    from src.indexer import get_client
 
-    client = QdrantClient(
-        host=config.QDRANT_HOST,
-        port=config.QDRANT_PORT,
-        check_compatibility=False,
-    )
+    client = get_client()
     # Drop and recreate the collection to ensure a clean replay state
     try:
         client.delete_collection(config.QDRANT_COLLECTION)
@@ -396,7 +390,7 @@ def run_replay(repo_id: str, limit: int | None = None) -> tuple[float, float, fl
     )
     console.print(f"\nReport written to: [bold]{report_path}[/bold]")
 
-    return precision, recall, f1
+    return precision, recall, f1, report_path, len(all_issues)
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
@@ -418,8 +412,28 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    precision, recall, f1 = run_replay(repo_id=args.repo, limit=args.limit)
-    print(f"\nPrecision: {precision:.4f}  Recall: {recall:.4f}  F1: {f1:.4f}")
+    import mlflow
+    
+    mlflow.set_experiment("resolv-backtest")
+    
+    with mlflow.start_run():
+        mlflow.log_param("repo", args.repo)
+        if args.limit:
+            mlflow.log_param("limit", args.limit)
+            
+        mlflow.log_param("embedding_model", config.EMBEDDING_MODEL)
+        mlflow.log_param("llm_model", config.OLLAMA_MODEL)
+        mlflow.log_param("top_k", config.TOP_K)
+
+        precision, recall, f1, report_path, total_issues = run_replay(repo_id=args.repo, limit=args.limit)
+        
+        mlflow.log_param("total_issues", total_issues)
+        mlflow.log_metric("precision", precision)
+        mlflow.log_metric("recall", recall)
+        mlflow.log_metric("f1", f1)
+        mlflow.log_artifact(str(report_path))
+        
+        print(f"\nPrecision: {precision:.4f}  Recall: {recall:.4f}  F1: {f1:.4f}")
 
 
 if __name__ == "__main__":
