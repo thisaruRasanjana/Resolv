@@ -14,10 +14,10 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full technical specification.
   GitHub Issue Opened
          │
          ▼
-  ┌──────────────┐    HMAC verify    ┌─────────────────┐
-  │   Webhook     │ ───────────────▶ │  Redis Streams   │
-  │   Receiver    │                  │  (event queue)   │
-  └──────────────┘                  └────────┬─────────┘
+  ┌──────────────┐    HMAC verify   ┌─────────────────┐
+  │   Webhook    │ ───────────────▶ │  Redis Streams  │
+  │   Receiver   │                  │  (event queue)  │
+  └──────────────┘                  └────────┬────────┘
                                              │
                           ┌──────────────────┤
                           ▼                  ▼
@@ -64,7 +64,7 @@ All three components run as independent processes, connected only through Redis.
 - Python 3.11+
 - Docker Desktop running
 - Ollama running locally with `llama3.1:8b` pulled (`ollama pull llama3.1:8b`)
-- A GitHub App configured (see [ARCHITECTURE.md](ARCHITECTURE.md) §7 for setup)
+- A GitHub App configured (see [ARCHITECTURE.md](ARCHITECTURE.md) for setup)
 
 ### 1. Install
 
@@ -199,7 +199,7 @@ Resolv/
 
 ## Key design decisions
 
-- **Single Ollama model for both embeddings and generation** — eliminates the need for PyTorch/sentence-transformers, keeping the Docker image at ~105 MB and RAM usage low enough for an 8 GB MacBook Air.
+- **Single Ollama model for both embeddings and generation** — eliminates the need for PyTorch/sentence-transformers, keeping the Docker image at ~105 MB and RAM usage low.
 - **Redis Streams (not Kafka/RabbitMQ)** — lightweight, already battle-tested, and consumer groups give us exactly-once processing semantics with manual acknowledgement.
 - **SQLite (not Postgres)** — perfectly sufficient for idempotency tracking, rate limiting state, and installation records at single-instance scale. `BEGIN IMMEDIATE` transactions provide safe concurrency between workers.
 - **Deterministic UUIDs for Qdrant points** — `uuid5(repo_id/issue_number)` means upserts are naturally idempotent without any coordination.
