@@ -10,7 +10,6 @@ Model: llama3.1:8b (using Ollama's /api/embed endpoint)
     - Uses the same LLM running locally to produce embeddings!
 """
 
-import os
 import httpx
 from src import config
 from src.logging import get_logger
@@ -19,11 +18,9 @@ log = get_logger(__name__)
 
 BODY_MAX_CHARS = 512
 
-# We hit the Ollama /api/embed API. Since it is running on the host, 
-# Docker pods access it via host.docker.internal.
-OLLAMA_EMBED_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434") + "/api/embed"
-# Use the same model as the LLM for embeddings to save RAM
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "llama3.1:8b")
+# We hit the Ollama /api/embed API.
+OLLAMA_EMBED_URL = f"{config.OLLAMA_BASE_URL}/api/embed"
+EMBEDDING_MODEL = config.EMBEDDING_MODEL
 
 def prepare_text(title: str, body: str | None) -> str:
     body_excerpt = (body or "").strip()[:BODY_MAX_CHARS]
