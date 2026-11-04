@@ -2,6 +2,8 @@
 
 An AI bot that installs on GitHub repositories and automatically triages new issues — detecting duplicates, suggesting labels, and linking related issues — by retrieving semantically similar past issues and having an LLM synthesize a structured comment.
 
+**Evaluated against 3,000 real [`microsoft/vscode`](https://github.com/microsoft/vscode) issues: 50% Recall@10 on duplicate detection using semantic vector search alone, measured with a chronological no-leakage backtest.**
+
 Fully self-hosted. Zero API costs. Runs on a single machine with [Ollama](https://ollama.com).
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full technical specification.
@@ -114,15 +116,28 @@ make smee SMEE_URL=https://smee.io/YOUR_URL
 
 ## Offline backtest
 
-The backtest harness lets you evaluate the triage pipeline against real historical GitHub data before deploying live.
+The backtest harness evaluates the retrieval pipeline against real historical GitHub data before deploying live. Issues are replayed in strict chronological order — when evaluating issue N, the index contains only issues 1…N-1, guaranteeing no future data leakage.
 
 ```bash
 # Fetch 3000 issues from microsoft/vscode (extracts ground-truth duplicates)
 make fetch REPO=microsoft/vscode LIMIT=3000
 
-# Replay chronologically — no future leakage guaranteed
+# Fast retrieval eval: Recall@10 — no LLM needed, ~2 min for 3000 issues
+make backtest-retrieval REPO=microsoft/vscode LIMIT=3000
+
+# Full pipeline eval: Precision / Recall / F1 — requires Ollama LLM running
 make backtest REPO=microsoft/vscode LIMIT=3000
 ```
+
+**Measured result on `microsoft/vscode` (3,000 issues, 56 ground-truth duplicate pairs):**
+
+| Metric | Value |
+|---|---|
+| Recall@10 | **50.0%** |
+| Embedding model | `nomic-embed-text` (768-dim, via Ollama) |
+| Evaluation method | Chronological replay — no future leakage |
+
+Recall@10 = the fraction of known duplicate pairs where the original issue appears in the top-10 vector search results.
 
 Results are tracked in MLflow. To browse experiments:
 

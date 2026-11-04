@@ -42,13 +42,15 @@ OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
 # ── Vector store (Qdrant) ───────────────────────────────────────────────────
 QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
-QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "resolv_issues_llama3")
+QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "resolv_issues")
 
 # ── Embeddings (Ollama) ─────────────────────────────────────────────────────
-# Uses the same llama3.1:8b model running in Ollama for embeddings.
-# This eliminates the need for sentence-transformers and PyTorch.
-EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "llama3.1:8b")
-EMBEDDING_DIM: int = 4096
+# Uses nomic-embed-text — a purpose-built embedding model via Ollama.
+# nomic-embed-text outputs 768-dimensional vectors and is significantly
+# faster than using a generalist LLM (llama3.1:8b) for embeddings.
+# Pull it with: ollama pull nomic-embed-text
+EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "768"))
 
 # ── State store (SQLite) ────────────────────────────────────────────────────
 SQLITE_PATH: Path = Path(os.getenv("SQLITE_PATH", "backtest/data/resolv.db"))

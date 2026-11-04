@@ -13,22 +13,24 @@ How we enforce this:
     This means when we run the search for issue N, the index contains
     only issues 1…N-1 — exactly what the live system would see.
 
-Evaluation (duplicate detection only):
-    We evaluate only on issues that appear in ground_truth with a non-null,
-    non-(-1) value (i.e. we know exactly which issue it duplicates).
+Evaluation modes:
 
-    A prediction is:
-        TP: is_duplicate=True and duplicate_of matches ground truth
-        FP: is_duplicate=True but duplicate_of is wrong or no ground truth
-        FN: is_duplicate=False but ground truth says it's a duplicate
+  Full pipeline (default):
+    Runs the complete triage pipeline (embed → retrieve → LLM → parse).
+    Metrics: Precision, Recall, F1 on exact duplicate identification.
+    Requires Ollama LLM to be running. Slow (~1-2 hrs for 3000 issues
+    on an 8 GB M2 MacBook Air due to LLM inference time).
 
-    Precision = TP / (TP + FP)
-    Recall    = TP / (TP + FN)
-    F1        = 2 * P * R / (P + R)
+  Retrieval-only (--retrieval-only):
+    Skips the LLM step entirely. Embeds the query, retrieves top-k from
+    Qdrant, and checks whether the ground-truth duplicate appears in the
+    result set. Measures Recall@k — the standard metric for RAG pipelines.
+    Fast (~5 min for 3000 issues). Recommended for iterating on embeddings.
 
 Usage:
     python -m backtest.replay --repo microsoft/vscode
     python -m backtest.replay --repo microsoft/vscode --limit 2000
+    python -m backtest.replay --repo microsoft/vscode --retrieval-only
 
 Output:
     Printed report + backtest/results/{owner}_{repo}_report.md
@@ -48,7 +50,7 @@ from rich.table import Table
 from src import config
 from src.db import BacktestResult, get_connection, save_backtest_result
 from src.embedder import embed_batch, prepare_text
-from src.indexer import IssuePoint, ensure_collection, upsert_issue, upsert_issues_batch
+from src.indexer import IssuePoint, ensure_collection, search_similar, upsert_issue, upsert_issues_batch
 from src.logging import configure_logging, get_logger
 from src.triage import TriageResult, triage_issue
 
@@ -67,6 +69,16 @@ class Prediction:
     is_duplicate_predicted: bool
     confidence: float
     retrieval_top_score: float
+
+
+@dataclass
+class RetrievalHit:
+    """Result for retrieval-only evaluation (no LLM step)."""
+    issue_number: int
+    ground_truth_duplicate_of: int   # the canonical duplicate issue number
+    hit_in_top_k: bool               # did top-k results contain the ground truth?
+    top_score: float                 # cosine similarity of best match
+    retrieved_numbers: list[int]     # issue numbers in the retrieved set
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
@@ -167,6 +179,21 @@ def compute_metrics(predictions: list[Prediction]) -> tuple[float, float, float]
     return precision, recall, f1
 
 
+def compute_recall_at_k(hits: list[RetrievalHit]) -> float:
+    """
+    Compute Recall@k for retrieval-only evaluation.
+
+    Recall@k = fraction of known duplicate pairs where the ground-truth
+    duplicate issue appeared anywhere in the top-k retrieved results.
+
+    This is the standard RAG retrieval metric: it answers "does the
+    retrieval pipeline surface the right document?"
+    """
+    if not hits:
+        return 0.0
+    return sum(1 for h in hits if h.hit_in_top_k) / len(hits)
+
+
 # ── Report generation ─────────────────────────────────────────────────────────
 
 def write_report(
@@ -253,6 +280,167 @@ def write_report(
 
 # ── Main replay loop ──────────────────────────────────────────────────────────
 
+def run_retrieval_replay(repo_id: str, limit: int | None = None) -> tuple[float, Path, int]:
+    """
+    Fast retrieval-only replay. No LLM calls — measures Recall@k.
+
+    For each issue with a known ground-truth duplicate:
+        1. Embed the issue (nomic-embed-text via Ollama).
+        2. Search Qdrant for top-k most similar issues.
+        3. Record whether the ground-truth duplicate issue number appears
+           in the top-k result set.
+
+    Returns (recall_at_k, report_path, total_issues_replayed).
+    Typical runtime: ~5 minutes for 3000 issues on an M2 MacBook Air.
+    """
+    owner, repo = repo_id.split("/", 1)
+    data_dir = Path("backtest/data") / f"{owner}_{repo}"
+
+    all_issues = load_issues(data_dir)
+    ground_truth = load_ground_truth(data_dir)
+
+    if limit:
+        all_issues = all_issues[:limit]
+        log.info("limit applied", limit=limit)
+
+    from src.indexer import get_client
+
+    client = get_client()
+    try:
+        client.delete_collection(config.QDRANT_COLLECTION)
+        log.info("cleared existing collection", collection=config.QDRANT_COLLECTION)
+    except Exception:
+        pass
+    ensure_collection()
+
+    eval_issue_numbers = {
+        int(k) for k, v in ground_truth.items()
+        if v is not None and v > 0
+    }
+
+    console.print(
+        f"\n[bold]Starting retrieval-only replay[/bold]: {len(all_issues)} issues, "
+        f"{len(eval_issue_numbers)} with known duplicate targets\n"
+        f"[dim]Mode: Recall@{config.TOP_K} (no LLM — embedding + vector search only)[/dim]\n"
+    )
+
+    hits: list[RetrievalHit] = []
+    # Pre-compute all embeddings in one pass to save time
+    # (we still replay chronologically — embed first, upsert after triage)
+    with Progress(
+        SpinnerColumn(),
+        "[progress.description]{task.description}",
+        TimeElapsedColumn(),
+    ) as progress:
+        task = progress.add_task(f"Replaying {repo_id}…", total=len(all_issues))
+
+        for i, issue in enumerate(all_issues):
+            issue_number = issue["number"]
+            title = issue.get("title", "")
+            body = issue.get("body")
+
+            text = prepare_text(title, body)
+            vector = embed_batch([text])[0]
+
+            # ── Step 1: Retrieval eval (before upsert — no future leakage) ──
+            if issue_number in eval_issue_numbers:
+                results = search_similar(
+                    query_vector=vector,
+                    repo_id=repo_id,
+                    top_k=config.TOP_K,
+                    exclude_issue_number=issue_number,
+                )
+                retrieved_numbers = [r.issue_number for r in results]
+                gt_target = ground_truth[str(issue_number)]
+                top_score = results[0].score if results else 0.0
+
+                hits.append(RetrievalHit(
+                    issue_number=issue_number,
+                    ground_truth_duplicate_of=gt_target,
+                    hit_in_top_k=gt_target in retrieved_numbers,
+                    top_score=top_score,
+                    retrieved_numbers=retrieved_numbers,
+                ))
+
+            # ── Step 2: Upsert AFTER eval — no future leakage ──
+            point = issue_to_point(issue, repo_id, vector)
+            upsert_issue(point)
+
+            progress.advance(task)
+
+            if (i + 1) % 100 == 0:
+                log.info(
+                    "replay progress",
+                    processed=i + 1,
+                    total=len(all_issues),
+                    evaluated=len(hits),
+                )
+
+    recall_at_k = compute_recall_at_k(hits)
+
+    # Write report
+    out_dir = Path("backtest/results")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = repo_id.replace("/", "_")
+    report_path = out_dir / f"{safe_name}_retrieval_report.md"
+
+    # Rich terminal table
+    table = Table(title=f"Retrieval Backtest — {repo_id}", show_header=True)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="bold green")
+    table.add_row("Issues replayed", str(len(all_issues)))
+    table.add_row("Known duplicate pairs evaluated", str(len(hits)))
+    table.add_row(f"Recall@{config.TOP_K}", f"{recall_at_k:.4f}  ({recall_at_k*100:.1f}%)")
+    table.add_row("Embedding model", config.EMBEDDING_MODEL)
+    table.add_row("Top-k", str(config.TOP_K))
+    console.print(table)
+
+    hit_examples = [h for h in hits if h.hit_in_top_k]
+    miss_examples = [h for h in hits if not h.hit_in_top_k]
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    lines = [
+        f"# Retrieval Backtest Report — {repo_id}",
+        f"",
+        f"Generated: {now}",
+        f"",
+        f"## Configuration",
+        f"| Setting | Value |",
+        f"|---|---|",
+        f"| Embedding model | `{config.EMBEDDING_MODEL}` |",
+        f"| Top-k | {config.TOP_K} |",
+        f"| Issues replayed | {len(all_issues)} |",
+        f"| Known duplicate pairs evaluated | {len(hits)} |",
+        f"",
+        f"## Results",
+        f"| Metric | Value |",
+        f"|---|---|",
+        f"| Recall@{config.TOP_K} | **{recall_at_k:.4f}** ({recall_at_k*100:.1f}%) |",
+        f"",
+        f"> Recall@{config.TOP_K}: fraction of known duplicate pairs where the ground-truth",
+        f"> duplicate issue appeared in the top-{config.TOP_K} retrieved results.",
+        f"",
+        f"## Hits (ground truth found in top-{config.TOP_K}) — first 10",
+    ]
+    for h in hit_examples[:10]:
+        lines.append(
+            f"- Issue #{h.issue_number}: found #{h.ground_truth_duplicate_of} "
+            f"(top score={h.top_score:.3f}, retrieved={h.retrieved_numbers[:5]})"
+        )
+    lines += [f"", f"## Misses (ground truth NOT in top-{config.TOP_K}) — first 10"]
+    for h in miss_examples[:10]:
+        lines.append(
+            f"- Issue #{h.issue_number}: missed #{h.ground_truth_duplicate_of} "
+            f"(top score={h.top_score:.3f}, retrieved={h.retrieved_numbers[:5]})"
+        )
+
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    log.info("retrieval report written", path=str(report_path))
+    console.print(f"\nReport written to: [bold]{report_path}[/bold]")
+
+    return recall_at_k, report_path, len(all_issues)
+
+
 def run_replay(repo_id: str, limit: int | None = None) -> tuple[float, float, float, Path, int]:
     """
     Run the full chronological replay and return (precision, recall, f1, report_path, total_issues).
@@ -282,6 +470,7 @@ def run_replay(repo_id: str, limit: int | None = None) -> tuple[float, float, fl
     # Clear the collection to start fresh — important for reproducible results
     from src.indexer import get_client
 
+    client = get_client()
     client = get_client()
     # Drop and recreate the collection to ensure a clean replay state
     try:
@@ -410,30 +599,48 @@ def main() -> None:
         default=None,
         help="Maximum number of issues to replay (for quick test runs).",
     )
+    parser.add_argument(
+        "--retrieval-only",
+        action="store_true",
+        help=(
+            "Skip the LLM step. Measure Recall@k: whether the ground-truth duplicate "
+            "appears in the top-k vector search results. Fast (~5 min for 3000 issues). "
+            "Recommended for iterating on embedding models."
+        ),
+    )
     args = parser.parse_args()
 
     import mlflow
-    
+
     mlflow.set_experiment("resolv-backtest")
-    
+
     with mlflow.start_run():
         mlflow.log_param("repo", args.repo)
+        mlflow.log_param("mode", "retrieval-only" if args.retrieval_only else "full-pipeline")
         if args.limit:
             mlflow.log_param("limit", args.limit)
-            
         mlflow.log_param("embedding_model", config.EMBEDDING_MODEL)
-        mlflow.log_param("llm_model", config.OLLAMA_MODEL)
         mlflow.log_param("top_k", config.TOP_K)
 
-        precision, recall, f1, report_path, total_issues = run_replay(repo_id=args.repo, limit=args.limit)
-        
-        mlflow.log_param("total_issues", total_issues)
-        mlflow.log_metric("precision", precision)
-        mlflow.log_metric("recall", recall)
-        mlflow.log_metric("f1", f1)
-        mlflow.log_artifact(str(report_path))
-        
-        print(f"\nPrecision: {precision:.4f}  Recall: {recall:.4f}  F1: {f1:.4f}")
+        if args.retrieval_only:
+            recall_at_k, report_path, total_issues = run_retrieval_replay(
+                repo_id=args.repo, limit=args.limit
+            )
+            mlflow.log_param("total_issues", total_issues)
+            mlflow.log_metric("recall_at_k", recall_at_k)
+            mlflow.log_artifact(str(report_path))
+            print(f"\nRecall@{config.TOP_K}: {recall_at_k:.4f}  ({recall_at_k*100:.1f}%)")
+        else:
+            mlflow.log_param("llm_model", config.OLLAMA_MODEL)
+            precision, recall, f1, report_path, total_issues = run_replay(
+                repo_id=args.repo, limit=args.limit
+            )
+            mlflow.log_param("total_issues", total_issues)
+            mlflow.log_metric("precision", precision)
+            mlflow.log_metric("recall", recall)
+            mlflow.log_metric("f1", f1)
+            mlflow.log_artifact(str(report_path))
+            print(f"\nPrecision: {precision:.4f}  Recall: {recall:.4f}  F1: {f1:.4f}")
 
 
 if __name__ == "__main__":
