@@ -30,9 +30,10 @@ def test_prepare_text_handles_none_body():
     assert text  # not empty
 
 
-def test_embedding_dim_is_4096():
-    """llama3.1:8b produces 4096-dim vectors via Ollama."""
-    assert embedding_dim() == 4096
+def test_embedding_dim_matches_config():
+    """Embedding dim must match EMBEDDING_DIM in config (nomic-embed-text → 768)."""
+    from src import config
+    assert embedding_dim() == config.EMBEDDING_DIM
 
 
 def test_embed_batch_empty_input():

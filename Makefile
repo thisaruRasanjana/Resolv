@@ -1,4 +1,4 @@
-.PHONY: help install up down fetch backtest test lint
+.PHONY: help install up down fetch backtest backtest-retrieval test lint
 
 # Use python3 explicitly — macOS does not symlink 'python' by default
 PYTHON := python3
@@ -13,9 +13,10 @@ help:
 	@echo "    make down             Stop Docker services"
 	@echo ""
 	@echo "  Phase 1 — Backtest:"
-	@echo "    make fetch            Fetch issues from the target repo"
+	@echo "    make fetch                   Fetch issues from the target repo"
 	@echo "    make fetch REPO=owner/repo   Fetch from a specific repo"
-	@echo "    make backtest         Run the full backtest (requires fetched data)"
+	@echo "    make backtest-retrieval      Fast eval: Recall@k, no LLM (~5 min)"
+	@echo "    make backtest                Full pipeline eval: Precision/Recall/F1 (slow)"
 	@echo "    make backtest REPO=owner/repo LIMIT=2000"
 	@echo ""
 	@echo "  Development:"
@@ -45,12 +46,21 @@ fetch:
 		--repo $(REPO) \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
-# Run the full backtest replay.
+# Run the full backtest replay (embed + LLM triage). Slow on constrained hardware.
 # Uses the same REPO and optional LIMIT variables.
 backtest:
 	$(PYTHON) -m backtest.replay \
 		--repo $(REPO) \
 		$(if $(LIMIT),--limit $(LIMIT),)
+
+# Fast retrieval-only backtest: embed + vector search only, no LLM.
+# Measures Recall@k — did top-k results contain the known duplicate?
+# Recommended for iterating on embedding models. ~5 min for 3000 issues.
+backtest-retrieval:
+	$(PYTHON) -m backtest.replay \
+		--repo $(REPO) \
+		$(if $(LIMIT),--limit $(LIMIT),) \
+		--retrieval-only
 
 test:
 	$(PYTHON) -m pytest tests/ -v
