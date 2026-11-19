@@ -10,7 +10,11 @@ Performance: ARCHITECTURE.md §3.1 — return 200 immediately, never block on sl
 
 import hashlib
 import hmac
+import asyncio
 import json
+import os
+
+import httpx
 
 from fastapi import FastAPI, Request, Response
 
@@ -23,6 +27,17 @@ from prometheus_client import make_asgi_app
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 log = get_logger(__name__)
+
+
+_bg_tasks: set[asyncio.Task] = set()
+
+
+async def _wake_workers() -> None:
+    urls = [u.strip() for u in os.getenv("WAKE_URLS", "").split(",") if u.strip()]
+    if not urls:
+        return
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        await asyncio.gather(*(client.post(u) for u in urls), return_exceptions=True)
 
 app = FastAPI(title="Resolv Webhook Receiver", version="0.1.0")
 
@@ -122,6 +137,9 @@ async def handle_webhook(request: Request):
     
     with tracer.start_as_current_span("enqueue"):
         await publish_event(event_data)
+        t = asyncio.create_task(_wake_workers())
+        _bg_tasks.add(t)
+        t.add_done_callback(_bg_tasks.discard)
     
     if event_type == "issues":
         log.info(

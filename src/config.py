@@ -69,6 +69,9 @@ def get_github_app_id() -> int:
 
 def get_github_private_key() -> str:
     """Read the GitHub App private key from the PEM file."""
+    env_key = os.getenv("GITHUB_PRIVATE_KEY", "").strip()
+    if env_key:
+        return env_key.replace("\\n", "\n")
     key_path = Path(_require("GITHUB_PRIVATE_KEY_PATH"))
     if not key_path.exists():
         raise RuntimeError(f"Private key file not found: {key_path}")

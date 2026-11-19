@@ -1,3 +1,4 @@
+import os
 """
 src/indexer.py — Qdrant vector store client wrapper.
 
@@ -68,6 +69,7 @@ def get_client() -> QdrantClient:
     if _client is None:
         _client = QdrantClient(
             url=config.QDRANT_URL,
+            api_key=os.getenv("QDRANT_API_KEY") or None,
             # Suppress the version-mismatch warning — we manage compatibility
             # via pinned versions in pyproject.toml and docker-compose.yml.
             check_compatibility=False,

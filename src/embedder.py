@@ -1,3 +1,4 @@
+import os
 """
 src/embedder.py — Ollama embedding wrapper.
 
@@ -59,6 +60,26 @@ def embed_batch(texts: list[str]) -> list[list[float]]:
     """Embed a list of texts. Tries new API first, falls back to legacy."""
     if not texts:
         return []
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if gemini_key:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key={gemini_key}"
+        vecs = []
+        with httpx.Client(timeout=60.0) as client:
+            for i in range(0, len(texts), 50):
+                chunk = texts[i : i + 50]
+                resp = client.post(url, json={
+                    "requests": [
+                        {
+                            "model": "models/gemini-embedding-001",
+                            "content": {"parts": [{"text": t}]},
+                            "outputDimensionality": config.EMBEDDING_DIM,
+                        }
+                        for t in chunk
+                    ]
+                })
+                resp.raise_for_status()
+                vecs.extend(e["values"] for e in resp.json()["embeddings"])
+        return vecs
     log.debug("embedding batch via Ollama", num_texts=len(texts))
     with httpx.Client() as client:
         try:
