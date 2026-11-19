@@ -167,4 +167,6 @@ async def run_worker():
 
 
 if __name__ == "__main__":
+    from src.workers.wake_server import start_wake_server
+    start_wake_server()
     asyncio.run(run_worker())

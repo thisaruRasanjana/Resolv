@@ -4,9 +4,7 @@ An AI bot that installs on GitHub repositories and automatically triages new iss
 
 **Evaluated against 3,000 real [`microsoft/vscode`](https://github.com/microsoft/vscode) issues: 50% Recall@10 on duplicate detection using semantic vector search alone, measured with a chronological no-leakage backtest.**
 
-Fully self-hosted. Zero API costs. Runs on a single machine with [Ollama](https://ollama.com).
-
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full technical specification.
+Fully self-hosted or cloud-deployed. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full technical specification.
 
 ---
 
@@ -43,23 +41,77 @@ All three components run as independent processes, connected only through Redis.
 
 ## Tech stack
 
-| Layer | Choice |
-|---|---|
-| Language | Python 3.11+ |
-| Webhook Receiver | FastAPI + Uvicorn |
-| Event Queue | Redis Streams (async `redis-py`) |
-| Embeddings + LLM | Ollama (`llama3.1:8b`, self-hosted, zero cost) |
-| Vector Store | Qdrant (cosine similarity, multi-tenant filtering) |
-| State Store | SQLite (idempotency, rate limiting, installations) |
-| Rate Limiting | Token bucket algorithm (per-repo, SQLite-backed) |
-| Deployment | Docker, Kubernetes (kind), KEDA autoscaling |
-| Observability | Prometheus metrics, OpenTelemetry tracing, Grafana |
-| Experiment Tracking | MLflow (local file backend) |
-| CI / Eval Gate | GitHub Actions (backtest-gated PRs) |
+| Layer | Local | Cloud |
+|---|---|---|
+| Language | Python 3.11+ | Python 3.11+ |
+| Webhook Receiver | FastAPI + Uvicorn | FastAPI + Uvicorn (Azure Container Apps) |
+| Event Queue | Redis Streams (Docker) | Upstash Redis Streams (TLS) |
+| Embeddings | Ollama `nomic-embed-text` | Gemini `gemini-embedding-001` (768-dim) |
+| LLM | Ollama `llama3.1:8b` | Groq `openai/gpt-oss-20b` |
+| Vector Store | Qdrant (Docker) | Qdrant Cloud Free Tier |
+| State Store | SQLite | SQLite (ephemeral container volume) |
+| Rate Limiting | Token bucket (SQLite-backed) | Token bucket (SQLite-backed) |
+| Deployment | Docker Compose / Kubernetes (kind) | Azure Container Apps (`minReplicas: 0`) |
+| Observability | Prometheus, OpenTelemetry, Grafana | Azure Container Apps log streaming |
+| Experiment Tracking | MLflow (local) | MLflow (local) |
+| CI / Eval Gate | GitHub Actions | GitHub Actions |
 
 ---
 
-## Quickstart
+## Live Cloud Deployment (Azure Container Apps)
+
+The bot is deployed to production on Azure Container Apps in the **Malaysia West** region, verified against the [`thisaruRasanjana/bot-testing-sandbox`](https://github.com/thisaruRasanjana/bot-testing-sandbox) repository.
+
+**GitHub App:** `resolv-triage-bot-thisaru` (App ID: `4679516`)
+
+| Endpoint | URL |
+|---|---|
+| Webhook | `https://resolv-webhook.yellowsand-62e3a857.malaysiawest.azurecontainerapps.io/webhook` |
+| Health check | `https://resolv-webhook.yellowsand-62e3a857.malaysiawest.azurecontainerapps.io/health` |
+
+### Cloud architecture
+
+Three Azure Container Apps (`resolv-webhook`, `resolv-triage`, `resolv-ingestion`) with `minReplicas: 0` — the entire deployment scales to zero when idle, running at **\$0.00/mo** in steady state.
+
+```
+  GitHub Webhook
+       │
+       ▼
+  resolv-webhook  ──► Upstash Redis Streams (TLS)  ──► resolv-ingestion
+  (always-warm)   │                                        (scale-to-zero)
+                  │   WAKE_URLS POST /wake (port 8080)
+                  └──────────────────────────────────► resolv-triage
+                                                            (scale-to-zero)
+```
+
+**Scale-from-zero wake-up:** After enqueueing an event to Redis, the webhook container sends a non-blocking `POST` to each worker's internal `/wake` endpoint (configured via `WAKE_URLS`). This pulls workers from 0 replicas before the first Redis `XREADGROUP` poll, eliminating cold-start latency for the job that triggered the wake.
+
+### Cloud infrastructure
+
+| Component | Service |
+|---|---|
+| Compute | Azure Container Apps — Malaysia West, `minReplicas: 0` |
+| Message queue | Upstash Redis Streams (`rediss://` TLS), consumer groups `ingestion-group` / `triage-group` |
+| Vector store | Qdrant Cloud Free Tier — collection `resolv_issues`, keyword payload index on `repo_id` |
+| Embeddings | Google Gemini `gemini-embedding-001` (768-dim) via `src/embedder.py` |
+| LLM | Groq (`openai/gpt-oss-20b`) via `src/triage.py` |
+
+### Cloud environment variables
+
+The following env vars are added on top of the local defaults. No secrets are stored in the repository.
+
+| Variable | Module | Purpose |
+|---|---|---|
+| `GITHUB_PRIVATE_KEY` | `src/config.py` | Inline PEM string (replaces file path for containerised deploys) |
+| `QDRANT_API_KEY` | `src/indexer.py` | Qdrant Cloud API key |
+| `GEMINI_API_KEY` | `src/embedder.py` | Google Gemini embeddings API key |
+| `GROQ_API_KEY` | `src/triage.py` | Groq LLM API key |
+| `GROQ_MODEL` | `src/triage.py` | Model override (defaults to `openai/gpt-oss-20b`) |
+| `WAKE_URLS` | `src/webhook.py` | Comma-separated internal `/wake` URLs for each worker container |
+
+---
+
+## Quickstart (local)
 
 ### Prerequisites
 

@@ -1,3 +1,4 @@
+import os
 """
 src/triage.py — Core triage logic: retrieve similar issues, call the LLM,
 parse structured output.
@@ -119,6 +120,30 @@ def call_ollama(prompt: str, retries: int = 3) -> str:
 
     Raises RuntimeError after all retries are exhausted.
     """
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key:
+        groq_url = "https://api.groq.com/openai/v1/chat/completions"
+        groq_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+        for attempt in range(retries):
+            try:
+                with httpx.Client(timeout=60.0) as client:
+                    r = client.post(
+                        groq_url,
+                        headers={"Authorization": f"Bearer {groq_key}"},
+                        json={
+                            "model": groq_model,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": 0.1,
+                        },
+                    )
+                    r.raise_for_status()
+                    return r.json()["choices"][0]["message"]["content"]
+            except (httpx.HTTPError, KeyError) as exc:
+                if attempt < retries - 1:
+                    time.sleep(2 ** attempt)
+        llm_call_errors.inc()
+        raise RuntimeError(f"Groq call failed after {retries} attempts")
+
     url = f"{config.OLLAMA_BASE_URL}/api/generate"
     payload = {
         "model": config.OLLAMA_MODEL,
